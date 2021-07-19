@@ -1,0 +1,5 @@
+                pipeline = gst_parse_launch(
+                        "rtspsrc location=rtsp://0.0.0.0:8554/back short-header=TRUE ! rtph264depay ! "
+                        "video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! "
+                        "appsink sync=TRUE emit-signals=TRUE name=appsink-video",
+                        &error);

@@ -1,0 +1,71 @@
+ros_app_launch() {
+    export START_X=0  # start location of robot
+    export START_Y=0
+    export START_YAW=0
+    export HUSKY_REALSENSE_ENABLED=true
+    export HUSKY_LMS1XX_ENABLED=true
+    roslaunch robot_fleet husky_app_with_rtsp.launch
+}
+
+build_and_run_webrtc() {
+    # build code again
+    echo "building webrtc code"
+    APP_DIRECTORY=/home/ubuntu/environment
+    mkdir $APP_DIRECTORY/amazon-kinesis-video-streams-webrtc-sdk-c/build
+    cd $APP_DIRECTORY/amazon-kinesis-video-streams-webrtc-sdk-c/build
+    cmake ..
+    make
+
+    export AWS_KVS_LOG_LEVEL=3
+
+    # run the binary
+    echo "launching webrtc app"
+    cd $APP_DIRECTORY/amazon-kinesis-video-streams-webrtc-sdk-c/build/samples
+
+    echo "create signalling channel, in case it doesnt exist"
+    aws kinesisvideo create-signaling-channel --channel-name robot_webrtc_stream
+    sleep 3
+    ./kvsWebrtcClientMasterGstSample robot_webrtc_stream
+}
+
+
+run_kinesis_stream() {
+    # set env vars to recognize the kvs plugin
+    APP_DIRECTORY=/home/ubuntu/environment
+    export GST_PLUGIN_PATH=$GST_PLUGIN_PATH:$APP_DIRECTORY/amazon-kinesis-video-streams-producer-sdk-cpp/build
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$APP_DIRECTORY/amazon-kinesis-video-streams-producer-sdk-cpp/open-source/local/lib
+
+    export AWS_KVS_LOG_LEVEL=3
+    
+    # Make create stream api everytime for simplicity. It just fails if it already exists.
+    echo "Creating a new stream if it doesnt exist"
+    aws kinesisvideo create-stream --stream-name "robot_kvs_stream" --data-retention-in-hours "120"
+    sleep 3
+    echo "setting up kvs streaming"
+    gst-launch-1.0 -v rtspsrc location=rtsp://0.0.0.0:8554/back drop-on-latency=true use-pipeline-clock=true do-retransmission=false latency=0 ! rtph264depay ! h264parse ! kvssink stream-name="robot_kvs_stream" storage-size=512 aws-region=$AWS_REGION
+}
+
+# For role attached to ec2 EC2 only
+creds_from_role_attached() {
+    export AWS_ACCESS_KEY_ID=`curl http://169.254.169.254/latest/meta-data/iam/security-credentials/$1 | jq -r '.AccessKeyId'`
+    export AWS_SECRET_ACCESS_KEY=`curl http://169.254.169.254/latest/meta-data/iam/security-credentials/$1 | jq -r '.SecretAccessKey'`
+    export AWS_SESSION_TOKEN=`curl http://169.254.169.254/latest/meta-data/iam/security-credentials/$1 | jq -r '.Token'`
+    export ACCESS_KEY_ENV_VAR=`curl http://169.254.169.254/latest/meta-data/iam/security-credentials/$1 | jq -r '.AccessKeyId'`
+    export SECRET_KEY_ENV_VAR=`curl http://169.254.169.254/latest/meta-data/iam/security-credentials/$1 | jq -r '.SecretAccessKey'`
+    export SESSION_TOKEN_ENV_VAR=`curl http://169.254.169.254/latest/meta-data/iam/security-credentials/$1 | jq -r '.Token'`
+    export AWS_REGION=`aws configure get default.region`
+    export AWS_DEFAULT_REGION=$AWS_REGION
+}
+
+# Pull creds from .aws/credentials/default
+creds_from_default_file() {
+    export AWS_ACCESS_KEY_ID=`aws configure get default.aws_access_key_id`
+    export AWS_SECRET_ACCESS_KEY=`aws configure get default.aws_secret_access_key`
+    export AWS_SESSION_TOKEN=`aws configure get default.aws_session_token`
+    export AWS_REGION=`aws configure get default.region`
+    
+    export ACCESS_KEY_ENV_VAR=$AWS_ACCESS_KEY_ID
+    export SECRET_KEY_ENV_VAR=$AWS_SECRET_ACCESS_KEY
+    export SESSION_TOKEN_ENV_VAR=$AWS_SESSION_TOKEN
+    export AWS_DEFAULT_REGION=$AWS_REGION
+}
